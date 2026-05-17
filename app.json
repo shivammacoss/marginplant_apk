@@ -74,11 +74,12 @@
         "origin": false
       },
       "eas": {
-        "projectId": ""
+        "projectId": "b6594fcd-4257-4412-9615-dfca6f53f6d7"
       }
     },
     "runtimeVersion": {
       "policy": "appVersion"
-    }
+    },
+    "owner": "shivam92388"
   }
 }
