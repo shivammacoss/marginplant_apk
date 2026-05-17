@@ -30,7 +30,6 @@ import { useInstrumentLabel } from "@features/trade/hooks/useInstrument";
 import { lookupInfowayLot } from "@features/trade/utils/infowayLots";
 import { isInstrumentMarketOpen, marketLabel } from "@shared/utils/marketHours";
 import { useWalletSummary } from "@features/wallet/hooks/useWallet";
-import { usePnLSummary } from "@features/portfolio/hooks/usePositions";
 import { useUiStore } from "@shared/store/ui.store";
 import { formatINR, formatNumber } from "@shared/utils/format";
 import type { OrderAction } from "@features/trade/types/order.types";
@@ -171,7 +170,6 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
   const quote = useQuote(target?.token ?? null);
   const label = useInstrumentLabel(target?.token ?? null);
   const wallet = useWalletSummary();
-  const pnl = usePnLSummary();
   // Admin-resolved segment settings — drives the default + min lot the
   // input shows. Re-fetches whenever the user opens a different
   // instrument or flips BUY/SELL (different admin overrides may apply per
@@ -215,20 +213,9 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
 
   const symbol = target?.symbol ?? label.symbol;
 
-  // Wallet-derived KPIs — match the web math (ledger = avail + used,
-  // equity = ledger + open_unrealised).
+  // Wallet state — used + available straight from /wallet/summary.
   const avail = Number(wallet.data?.available_balance ?? 0);
   const used = Number(wallet.data?.used_margin ?? 0);
-  const m2m = Number(pnl.data?.open_unrealised ?? wallet.data?.unrealized_pnl ?? 0);
-  const totalBalance = avail + used;
-  const equity = totalBalance + m2m;
-  // Today's session P&L for the INTRADAY KPI tile. Prefers `today_pnl`
-  // (realised + unrealised for today) from /positions/pnl-summary, falls
-  // back to `today_realised` if only that's populated, then 0. Backend
-  // computes this server-side over `executed_at >= midnight IST` so it's
-  // already the "today's session" number — no client-side filtering needed.
-  const intradayPnl =
-    Number(pnl.data?.today_pnl ?? pnl.data?.today_realised ?? 0) || 0;
 
   const lastTradeTime = useMemo(() => {
     const ts = tick?.ts ?? Date.now();
@@ -272,6 +259,25 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
       : backendLotSize > 0
       ? backendLotSize
       : 1;
+
+  // Trade-preview margin requirements for the 4-KPI grid below. The
+  // notional value of the contemplated trade drives both numbers:
+  //   • INTRADAY MARGIN — what an MIS order would block (5× leverage).
+  //   • CARRY FORWARD   — what a positional (delivery / NRML) order
+  //                       would block (1× = full notional).
+  // The leverage constants mirror the optimistic ballpark used by
+  // usePlaceOrder.approxMarginFor; the WS wallet event from the
+  // backend's wallet_service.block_margin replaces these with the
+  // exact server-side numbers within ~500 ms after a fill.
+  const previewLots = num(lots);
+  const previewPrice =
+    mode === "limit" ? num(limitPrice) || ltp || 0 : ltp || 0;
+  const previewNotional =
+    previewLots > 0 && previewPrice > 0
+      ? previewLots * lotSizeForConv * previewPrice
+      : 0;
+  const intradayMarginReq = previewNotional > 0 ? previewNotional / 5 : 0;
+  const carryForwardReq = previewNotional;
 
   // Derived display value for the stepper input — `lots` is the
   // canonical state; QTY mode renders `lots × lot_size`.
@@ -387,6 +393,27 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
       pushToast({
         kind: "warn",
         message: `Minimum ${adminMinLot} lot(s) required`,
+      });
+      return;
+    }
+    // ── Insufficient-balance pre-check ─────────────────────────
+    // Without this, a user with ₹0 wallet would see the optimistic
+    // "BUY 1 placed" green toast for ~300 ms before the backend's
+    // INSUFFICIENT_FUNDS rejection flipped it to red — "pehle order
+    // place ho gaya ka pop aata, baad me paisa nahi hai" bug. Gate
+    // BEFORE place.mutate so the optimistic flow never fires for a
+    // trade the user can't afford. Mirrors the server-side check
+    // (notional / 5 ≈ MIS margin) used by approxMarginFor in
+    // usePlaceOrder.ts so the threshold the user sees matches the
+    // threshold the server enforces.
+    const priceForCheck =
+      mode === "limit" ? num(limitPrice) || ltp || 0 : ask ?? ltp ?? 0;
+    const requiredMargin =
+      priceForCheck > 0 ? (value * lotSizeForConv * priceForCheck) / 5 : 0;
+    if (requiredMargin > 0 && avail < requiredMargin) {
+      pushToast({
+        kind: "warn",
+        message: "Insufficient balance — add funds to place this trade.",
       });
       return;
     }
@@ -901,33 +928,25 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
               </View>
             ) : null}
 
-            {/* 5-up KPI grid — HOLDING tile removed (always 0 for this
-                broker today; misleading to show). INTRADAY now shows
-                today's realised P&L pulled from /positions/pnl-summary
-                so the trader sees their actual day's session result here
-                instead of the previous placeholder "—". */}
+            {/* 4-up trade-preview KPI grid (2×2).
+                Top row = margin REQUIRED for the contemplated trade,
+                bottom row = wallet state. Gives the trader the two
+                numbers that matter before they tap BUY/SELL:
+                  • What does this trade cost me?
+                  • Do I have enough headroom? */}
             <View style={{ marginTop: 14, gap: 8 }}>
               <View style={{ flexDirection: "row", gap: 8 }}>
-                <KpiCell label="TOTAL BALANCE" value={compactINR(totalBalance)} />
                 <KpiCell
-                  label="EQUITY"
-                  value={compactINR(equity)}
-                  tone={m2m < 0 ? "sell" : "default"}
+                  label="INTRADAY MARGIN"
+                  value={compactINR(intradayMarginReq)}
                 />
-                <KpiCell label="USED MARGIN" value={compactINR(used)} />
+                <KpiCell
+                  label="CARRY FORWARD"
+                  value={compactINR(carryForwardReq)}
+                />
               </View>
               <View style={{ flexDirection: "row", gap: 8 }}>
-                <KpiCell
-                  label="INTRADAY"
-                  value={compactINR(intradayPnl)}
-                  tone={
-                    intradayPnl > 0
-                      ? "buy"
-                      : intradayPnl < 0
-                      ? "sell"
-                      : "default"
-                  }
-                />
+                <KpiCell label="USED MARGIN" value={compactINR(used)} />
                 <KpiCell
                   label="AVAILABLE"
                   value={compactINR(avail)}

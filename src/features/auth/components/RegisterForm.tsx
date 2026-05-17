@@ -136,7 +136,7 @@ function RegisterFormImpl() {
               onBlur={field.onBlur}
               error={fieldState.error?.message}
               secureTextEntry
-              placeholder="e.g. Vibhooti@123"
+              placeholder="e.g. Ram@123"
             />
           )}
         />
