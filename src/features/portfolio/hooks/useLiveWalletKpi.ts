@@ -1,7 +1,46 @@
 import { useMemo } from "react";
 import { useWalletSummary } from "@features/wallet/hooks/useWallet";
 import { useOpenPositions } from "@features/portfolio/hooks/usePositions";
+import { useTickerStore } from "@features/trade/store/ticker.store";
 import type { Position } from "@features/portfolio/types/position.types";
+
+/**
+ * Per-position live P&L derivation. Same max-abs heuristic the
+ * <LivePositionRow> wrapper uses on each row card so the per-row
+ * pnl and the aggregate (M2M / TOTAL P&L) stay in lock-step:
+ *
+ *   • Live tick available + sane avg/qty → recompute
+ *       (ltp − avg) × |qty|  (sign flipped for SELL)
+ *     and pick whichever of (derived, server) has larger magnitude.
+ *     This lets the value tick on every WS push for INR-quoted
+ *     instruments while still trusting the server's FX-applied
+ *     number for USD-quoted ones once it lands.
+ *   • Anything missing (no tick, qty 0, bad avg) → return server.
+ *
+ * Returns 0 when neither side has a usable number.
+ */
+export function computeLivePnl(args: {
+  serverPnl: number;
+  liveLtp: number | null | undefined;
+  avg: number;
+  // Signed quantity — positive = long, negative = short.
+  qty: number;
+}): number {
+  const { serverPnl, liveLtp, avg, qty } = args;
+  if (
+    liveLtp == null ||
+    !Number.isFinite(liveLtp) ||
+    !Number.isFinite(avg) ||
+    avg <= 0 ||
+    !Number.isFinite(qty) ||
+    qty === 0
+  ) {
+    return Number.isFinite(serverPnl) ? serverPnl : 0;
+  }
+  const isBuy = qty > 0;
+  const derived = (isBuy ? liveLtp - avg : avg - liveLtp) * Math.abs(qty);
+  return Math.abs(derived) >= Math.abs(serverPnl) ? derived : serverPnl;
+}
 
 export interface LiveWalletKpi {
   ledger: number;
@@ -45,6 +84,12 @@ export interface LiveWalletKpi {
 export function useLiveWalletKpi(): LiveWalletKpi {
   const wallet = useWalletSummary();
   const openPositions = useOpenPositions();
+  // Subscribe to the WS ticker store so M2M repaints on every tick
+  // (not just on the 3 s positions poll). The whole `ticks` object
+  // is replaced on every setTick (see ticker.store.setTick) so a
+  // single tick triggers one re-render here — O(positions) work,
+  // negligible for 5–50 rows.
+  const ticks = useTickerStore((s) => s.ticks);
 
   const available = Number(wallet.data?.available_balance ?? 0);
   const used = Number(wallet.data?.used_margin ?? 0);
@@ -61,10 +106,19 @@ export function useLiveWalletKpi(): LiveWalletKpi {
       // double-counts the same profit — once in LEDGER BALANCE and once
       // in M2M. That's the "M2M shows 4 lots' worth even after closing
       // 1 lot" bug — realized from the closed lot kept showing up here.
-      total += Number(p.unrealized_pnl) || 0;
+      //
+      // Live tick-driven recompute (same helper the row card uses) so
+      // M2M moves on every WS push instead of waiting on the 3 s poll.
+      const tok = p.instrument_token ? String(p.instrument_token) : "";
+      total += computeLivePnl({
+        serverPnl: Number(p.unrealized_pnl) || 0,
+        liveLtp: tok ? ticks[tok]?.ltp ?? null : null,
+        avg: Number(p.avg_price),
+        qty: Number(p.quantity),
+      });
     }
     return total;
-  }, [openPositions.data]);
+  }, [openPositions.data, ticks]);
 
   // CF (Carry Forward) Required = the EXTRA cash a user needs to convert
   // every open MIS position to NRML so it can be held overnight. Mirrors

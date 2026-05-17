@@ -38,6 +38,7 @@ import type {
 } from "@features/portfolio/types/position.types";
 import { useTickerStore } from "@features/trade/store/ticker.store";
 import { useTickerSubscription } from "@features/trade/hooks/useTickers";
+import { computeLivePnl } from "@features/portfolio/hooks/useLiveWalletKpi";
 
 type TabKey = "position" | "active" | "closed";
 
@@ -282,9 +283,26 @@ export function PortfolioScreen() {
     return filtered;
   }, [tab, sideFilter, openRows, closedRows, activeRows, searchQuery]);
 
+  // TOTAL P&L card — sum the LIVE (tick-driven) pnl, not the cached
+  // server value, so the aggregate moves on every WS push exactly
+  // like the per-row card does. Subscribing to `s.ticks` triggers a
+  // re-render per tick (O(rows) reduce; negligible).
+  const allTicks = useTickerStore((s) => s.ticks);
   const totalPnL = useMemo(
-    () => rowsForTab.reduce((sum, r) => sum + r.pnl, 0),
-    [rowsForTab],
+    () =>
+      rowsForTab.reduce((sum, r) => {
+        if (r.status !== "OPEN") return sum + r.pnl;
+        const tok = r.instrument_token ? String(r.instrument_token) : "";
+        const live = computeLivePnl({
+          serverPnl: r.pnl,
+          liveLtp: tok ? allTicks[tok]?.ltp ?? null : null,
+          avg: r.entry_price,
+          // Recover signed qty from side — rowsForTab carries abs qty.
+          qty: r.side === "BUY" ? r.quantity : -r.quantity,
+        });
+        return sum + live;
+      }, 0),
+    [rowsForTab, allTicks],
   );
 
   // Look up the live row for the sheet (qty / lots / P&L all reflect
@@ -781,16 +799,12 @@ function LivePositionRow({
     if (row.status !== "OPEN") return row;
     const liveLtp = tick?.ltp;
     if (liveLtp == null || !Number.isFinite(liveLtp)) return row;
-    const avg = Number(row.entry_price);
-    const qty = Number(row.quantity);
-    if (!Number.isFinite(avg) || avg <= 0 || !Number.isFinite(qty) || qty <= 0) {
-      return { ...row, ltp: liveLtp };
-    }
-    const isBuy = row.side === "BUY";
-    const derivedPnl = (isBuy ? liveLtp - avg : avg - liveLtp) * qty;
-    const serverPnl = Number(row.pnl) || 0;
-    const displayPnl =
-      Math.abs(derivedPnl) >= Math.abs(serverPnl) ? derivedPnl : serverPnl;
+    const displayPnl = computeLivePnl({
+      serverPnl: Number(row.pnl) || 0,
+      liveLtp,
+      avg: Number(row.entry_price),
+      qty: row.side === "BUY" ? row.quantity : -row.quantity,
+    });
     return { ...row, ltp: liveLtp, pnl: displayPnl };
   }, [row, tick?.ltp]);
 
