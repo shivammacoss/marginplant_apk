@@ -260,15 +260,14 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
       ? backendLotSize
       : 1;
 
-  // Trade-preview margin requirements for the 4-KPI grid below. The
-  // notional value of the contemplated trade drives both numbers:
-  //   • INTRADAY MARGIN — what an MIS order would block (5× leverage).
-  //   • CARRY FORWARD   — what a positional (delivery / NRML) order
-  //                       would block (1× = full notional).
-  // The leverage constants mirror the optimistic ballpark used by
-  // usePlaceOrder.approxMarginFor; the WS wallet event from the
-  // backend's wallet_service.block_margin replaces these with the
-  // exact server-side numbers within ~500 ms after a fill.
+  // Trade-preview margin requirements for the 4-KPI grid below.
+  // Mirrors the backend's `wallet_service.block_margin` formula so the
+  // user sees the SAME number the server will enforce:
+  //   1. FIXED mode → lots × fixed_margin_per_lot
+  //   2. PERCENT mode → notional × (margin_percentage / 100)
+  //   3. LEVERAGE → notional / leverage
+  //   4. Fallback → notional / 5 (display-only ballpark)
+  // CARRY FORWARD uses notional × 1 (delivery / NRML full margin).
   const previewLots = num(lots);
   const previewPrice =
     mode === "limit" ? num(limitPrice) || ltp || 0 : ltp || 0;
@@ -276,7 +275,32 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
     previewLots > 0 && previewPrice > 0
       ? previewLots * lotSizeForConv * previewPrice
       : 0;
-  const intradayMarginReq = previewNotional > 0 ? previewNotional / 5 : 0;
+  // Returns the admin-configured margin block, or 0 when the backend
+  // hasn't given us a usable knob (no leverage / no margin% / no
+  // fixed-per-lot). Callers that need a value for display (the
+  // INTRADAY MARGIN tile) can OR-fallback to notional/5; the
+  // pre-check uses the 0 to know it should skip and let the server
+  // validate instead of false-blocking high-leverage instruments.
+  function calcRequiredMargin(notional: number, lotCount: number): number {
+    const eff = effective.data;
+    if (!eff || notional <= 0 || lotCount <= 0) return 0;
+    const fpm = Number(eff.fixed_margin_per_lot ?? 0);
+    if (fpm > 0 && (eff.margin_calc_mode ?? "").toUpperCase() === "FIXED") {
+      return lotCount * fpm;
+    }
+    const mp = Number(eff.margin_percentage ?? 0);
+    if (mp > 0) return notional * (mp / 100);
+    const lev = Number(eff.leverage ?? 0);
+    if (lev > 0) return notional / lev;
+    return 0;
+  }
+  const strictRequired = calcRequiredMargin(previewNotional, previewLots);
+  const intradayMarginReq =
+    strictRequired > 0
+      ? strictRequired
+      : previewNotional > 0
+      ? previewNotional / 5
+      : 0;
   const carryForwardReq = previewNotional;
 
   // Derived display value for the stepper input — `lots` is the
@@ -397,19 +421,21 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
       return;
     }
     // ── Insufficient-balance pre-check ─────────────────────────
-    // Without this, a user with ₹0 wallet would see the optimistic
-    // "BUY 1 placed" green toast for ~300 ms before the backend's
-    // INSUFFICIENT_FUNDS rejection flipped it to red — "pehle order
-    // place ho gaya ka pop aata, baad me paisa nahi hai" bug. Gate
-    // BEFORE place.mutate so the optimistic flow never fires for a
-    // trade the user can't afford. Mirrors the server-side check
-    // (notional / 5 ≈ MIS margin) used by approxMarginFor in
-    // usePlaceOrder.ts so the threshold the user sees matches the
-    // threshold the server enforces.
+    // Stops the "pehle place ho gaya pop, baad me paisa nahi hai pop"
+    // flicker for users with empty/low wallet. Uses the SAME formula
+    // (`calcRequiredMargin`) as the INTRADAY MARGIN tile above so the
+    // threshold the user sees on screen matches the threshold the
+    // server enforces. CRITICALLY we only enforce when
+    // `effective.data` has loaded — without admin-resolved leverage /
+    // fixed-margin info, any hardcoded fallback would be wildly wrong
+    // for high-leverage segments (crypto/forex 50–100×) and block
+    // legitimate trades. Server-side validator still catches it as
+    // the safety net.
     const priceForCheck =
       mode === "limit" ? num(limitPrice) || ltp || 0 : ask ?? ltp ?? 0;
-    const requiredMargin =
-      priceForCheck > 0 ? (value * lotSizeForConv * priceForCheck) / 5 : 0;
+    const notionalForCheck =
+      priceForCheck > 0 ? value * lotSizeForConv * priceForCheck : 0;
+    const requiredMargin = calcRequiredMargin(notionalForCheck, value);
     if (requiredMargin > 0 && avail < requiredMargin) {
       pushToast({
         kind: "warn",
