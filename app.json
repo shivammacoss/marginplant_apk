@@ -80,6 +80,9 @@
     "runtimeVersion": {
       "policy": "appVersion"
     },
-    "owner": "shivam92388"
+    "owner": "shivam92388",
+    "updates": {
+      "url": "https://u.expo.dev/b6594fcd-4257-4412-9615-dfca6f53f6d7"
+    }
   }
 }
