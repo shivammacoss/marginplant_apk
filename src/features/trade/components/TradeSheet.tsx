@@ -275,23 +275,28 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
     previewLots > 0 && previewPrice > 0
       ? previewLots * lotSizeForConv * previewPrice
       : 0;
-  // Returns the admin-configured margin block, or 0 when the backend
-  // hasn't given us a usable knob (no leverage / no margin% / no
-  // fixed-per-lot). Callers that need a value for display (the
-  // INTRADAY MARGIN tile) can OR-fallback to notional/5; the
-  // pre-check uses the 0 to know it should skip and let the server
-  // validate instead of false-blocking high-leverage instruments.
+  // Mirrors the web's OrderPanel margin math 1:1 so APK and web show
+  // the SAME ₹ value for the same instrument + lot count. Source:
+  // marginplant_ind/frontend-user/components/trading/OrderPanel.tsx
+  //   marginPerLot = lotSize × refPrice × (margin_pct/100) / leverage
+  //   intradayMargin = marginPerLot × lots
+  //   carryforwardMargin = intradayMargin × 1.4
+  // For "fixed" mode the admin's ₹/lot is used directly (lot_size +
+  // price are ignored). Returns 0 only when none of the knobs are
+  // populated — callers use that as "unknown, don't block".
   function calcRequiredMargin(notional: number, lotCount: number): number {
     const eff = effective.data;
     if (!eff || notional <= 0 || lotCount <= 0) return 0;
     const fpm = Number(eff.fixed_margin_per_lot ?? 0);
-    if (fpm > 0 && (eff.margin_calc_mode ?? "").toUpperCase() === "FIXED") {
+    if (fpm > 0 && (eff.margin_calc_mode ?? "").toLowerCase() === "fixed") {
       return lotCount * fpm;
     }
     const mp = Number(eff.margin_percentage ?? 0);
-    if (mp > 0) return notional * (mp / 100);
-    const lev = Number(eff.leverage ?? 0);
-    if (lev > 0) return notional / lev;
+    const lev = Number(eff.leverage ?? 0) || 1;
+    if (mp > 0) {
+      return (notional * (mp / 100)) / lev;
+    }
+    if (lev > 1) return notional / lev;
     return 0;
   }
   const strictRequired = calcRequiredMargin(previewNotional, previewLots);
@@ -301,7 +306,10 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
       : previewNotional > 0
       ? previewNotional / 5
       : 0;
-  const carryForwardReq = previewNotional;
+  // Web formula: carryforward = intraday × 1.4 (overnight risk premium).
+  // For intraday-only segments (crypto/forex) the multiplier is moot
+  // because the user can't carry overnight anyway.
+  const carryForwardReq = intradayMarginReq * 1.4;
 
   // Derived display value for the stepper input — `lots` is the
   // canonical state; QTY mode renders `lots × lot_size`.
