@@ -1,0 +1,12 @@
+{
+  "$comment": "Bump this file each time you ship a new APK build. The mobile app fetches it from GitHub Raw on Profile -> App updates. `apk_url` should point to the EAS-built APK (the Install link from expo.dev/builds/...). `changelog` lines render as bullet points.",
+  "version": "0.1.0",
+  "build": 1,
+  "released_at": "2026-05-17",
+  "apk_url": "",
+  "min_supported_build": 1,
+  "force_update": false,
+  "changelog": [
+    "Initial MarginPlant release"
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "cli": {
+    "version": ">= 12.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      },
+      "channel": "development",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.marginplant.com",
+        "EXPO_PUBLIC_WS_URL": "wss://api.marginplant.com",
+        "EXPO_PUBLIC_APP_NAME": "MarginPlant",
+        "EXPO_PUBLIC_ENV": "development"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.marginplant.com",
+        "EXPO_PUBLIC_WS_URL": "wss://api.marginplant.com",
+        "EXPO_PUBLIC_APP_NAME": "MarginPlant",
+        "EXPO_PUBLIC_ENV": "production"
+      }
+    },
+    "production": {
+      "channel": "production",
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.marginplant.com",
+        "EXPO_PUBLIC_WS_URL": "wss://api.marginplant.com",
+        "EXPO_PUBLIC_APP_NAME": "MarginPlant",
+        "EXPO_PUBLIC_ENV": "production"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
