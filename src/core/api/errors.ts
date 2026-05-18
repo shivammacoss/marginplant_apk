@@ -48,7 +48,30 @@ function normaliseMessage(
   details: Record<string, unknown> | undefined,
 ): string {
   // Friendly mapping for common cases.
+  //
+  // 401/403 → "Session expired" was misleading on fresh-login failures
+  // (admin creates user with wrong password → user tries to log in →
+  // 401 INVALID_CREDENTIALS → app said "Session expired" so the user
+  // thought their login was succeeding then expiring instead of being
+  // rejected outright). Map auth-failure CODES from the backend before
+  // the generic session-expired fallback so the toast tells the user
+  // what's actually wrong.
   if (status === 401 || status === 403) {
+    if (code === "INVALID_CREDENTIALS") {
+      return "Invalid email or password.";
+    }
+    if (code === "ACCOUNT_BLOCKED") {
+      return "Account blocked — contact support.";
+    }
+    if (code === "ACCOUNT_INACTIVE") {
+      return "Account is not active — contact support.";
+    }
+    if (code === "TWO_FA_REQUIRED") {
+      return "Two-factor code required.";
+    }
+    if (code === "TWO_FA_INVALID") {
+      return "Two-factor code is incorrect.";
+    }
     return "Session expired — please log in again.";
   }
   if (status === 503 || status === 502 || status === 504) {
