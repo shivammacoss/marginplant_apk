@@ -1,4 +1,18 @@
 export interface WalletSummary {
+  // ── Dabba / CFD KPIs (preferred, derived by backend) ─────────────
+  // `bal` is the "wallet wealth at rest" — stable when a trade is
+  // opened (only brokerage + realized PnL move it). `margin` is the
+  // locked margin against open positions. `equity = bal + floating
+  // PnL`. `free = equity - margin` is what's deployable on a new
+  // trade. `margin_level_pct = equity / margin × 100` is the
+  // stop-out gauge (lower = closer to auto-close).
+  bal?: string;
+  equity?: string;
+  margin?: string;
+  free?: string;
+  margin_level_pct?: number | null;
+  open_unrealized_pnl?: string;
+  // ── Legacy fields (kept for older clients) ───────────────────────
   available_balance: string;
   used_margin: string;
   realized_pnl: string;

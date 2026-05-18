@@ -215,9 +215,26 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
 
   const symbol = target?.symbol ?? label.symbol;
 
-  // Wallet state — used + available straight from /wallet/summary.
-  const avail = Number(wallet.data?.available_balance ?? 0);
-  const used = Number(wallet.data?.used_margin ?? 0);
+  // Wallet state in Dabba/CFD presentation. The summary endpoint now
+  // returns derived KPIs alongside the legacy fields:
+  //   bal    — wallet "wealth at rest" (deposits + realized PnL, stable
+  //            on trade open; only brokerage + realized PnL move it)
+  //   margin — locked margin against open positions
+  //   equity — bal + floating PnL across open positions
+  //   free   — equity - margin (deployable on a NEW trade after
+  //            honouring current float losses)
+  // Pre-flight uses `free` because a user with ₹4,000 bal + ₹2,000
+  // floating loss can no longer afford a fresh ₹2,000 trade even
+  // though their `available_balance` (legacy field) might suggest
+  // otherwise once the loss closes out.
+  const bal = Number(wallet.data?.bal ?? wallet.data?.available_balance ?? 0);
+  const margin = Number(wallet.data?.margin ?? wallet.data?.used_margin ?? 0);
+  const equity = Number(wallet.data?.equity ?? bal);
+  const free = Number(wallet.data?.free ?? bal - margin);
+  // Legacy aliases kept so other call sites in this file (USED tile,
+  // AVAIL tile) keep rendering with the same numbers users are used to.
+  const avail = free;
+  const used = margin;
 
   const lastTradeTime = useMemo(() => {
     const ts = tick?.ts ?? Date.now();
@@ -446,7 +463,11 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
     const notionalForCheck =
       priceForCheck > 0 ? value * lotSizeForConv * priceForCheck : 0;
     const requiredMargin = calcRequiredMargin(notionalForCheck, value);
-    if (requiredMargin > 0 && avail < requiredMargin) {
+    // Dabba pre-flight: deployable amount is FREE (= equity − margin), not
+    // just available cash. A wallet with ₹4k bal and a ₹2k floating loss
+    // cannot afford a fresh ₹2k trade even though the loss isn't realised
+    // yet — FREE has already dropped to ₹0 to reflect that constraint.
+    if (requiredMargin > 0 && free < requiredMargin) {
       pushToast({
         kind: "warn",
         message: "Insufficient balance — add funds to place this trade.",
@@ -1004,6 +1025,7 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
                   • What does this trade cost me?
                   • Do I have enough headroom? */}
             <View style={{ marginTop: 14, gap: 8 }}>
+              {/* Row 1: trade cost preview — what this BUY/SELL would lock. */}
               <View style={{ flexDirection: "row", gap: 8 }}>
                 <KpiCell
                   label="INTRADAY MARGIN"
@@ -1014,12 +1036,20 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
                   value={compactINR(carryForwardReq)}
                 />
               </View>
+              {/* Row 2: Dabba / CFD wallet KPIs — same four numbers most
+                  brokers surface in their trade strip. Bal stays put when
+                  margin is locked; Equity reflects floating PnL; Free is
+                  what the user can actually deploy on the NEXT trade. */}
               <View style={{ flexDirection: "row", gap: 8 }}>
-                <KpiCell label="USED MARGIN" value={compactINR(used)} />
+                <KpiCell label="BAL" value={compactINR(bal)} />
+                <KpiCell label="EQUITY" value={compactINR(equity)} />
+              </View>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <KpiCell label="MARGIN" value={compactINR(margin)} />
                 <KpiCell
-                  label="AVAILABLE"
-                  value={compactINR(avail)}
-                  tone="buy"
+                  label="FREE"
+                  value={compactINR(free)}
+                  tone={free < 0 ? "sell" : "buy"}
                 />
               </View>
             </View>
