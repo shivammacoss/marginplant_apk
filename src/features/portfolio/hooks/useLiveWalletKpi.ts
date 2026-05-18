@@ -91,9 +91,9 @@ export function useLiveWalletKpi(): LiveWalletKpi {
   // negligible for 5–50 rows.
   const ticks = useTickerStore((s) => s.ticks);
 
-  const available = Number(wallet.data?.available_balance ?? 0);
+  const rawAvailable = Number(wallet.data?.available_balance ?? 0);
   const used = Number(wallet.data?.used_margin ?? 0);
-  const ledger = available + used;
+  const ledger = rawAvailable + used;
 
   const m2m = useMemo(() => {
     const rows: Position[] = openPositions.data ?? [];
@@ -119,6 +119,18 @@ export function useLiveWalletKpi(): LiveWalletKpi {
     }
     return total;
   }, [openPositions.data, ticks]);
+
+  // MARGIN AVAILABLE = Equity − Margin = Bal + M2M − Used
+  //                  = (available + used + m2m) − used
+  //                  = rawAvailable + m2m
+  // User spec: "PNL jo hai mere available se mines hote rahega" — floating
+  // loss should erode what's deployable on the next trade. With the raw
+  // `available_balance` field the strip never reacted to PnL (only to
+  // realized trade events), so traders could keep punching in new orders
+  // while their existing positions silently bled out. Folding live M2M
+  // into Available matches the WalletStrip on the web user terminal and
+  // the standard CFD broker convention.
+  const available = rawAvailable + m2m;
 
   // CF (Carry Forward) Required = the EXTRA cash a user needs to convert
   // every open MIS position to NRML so it can be held overnight. Mirrors
