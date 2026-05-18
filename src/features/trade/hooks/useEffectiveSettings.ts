@@ -47,6 +47,19 @@ export function useEffectiveSettings(
     // for minutes at a time — 30s is the same TTL the backend uses for the
     // Redis-cached resolver, so any longer here just wastes a roundtrip.
     staleTime: 30_000,
+    // CRITICAL override of the global `refetchOnMount: false` default.
+    // The APK ships with a 24-hour AsyncStorage persister (see
+    // QueryProvider.tsx) which rehydrates every cached query on app
+    // launch. With the global `refetchOnMount: false` the trade panel
+    // happily served a 24-hour-old `lot_size` even after admin / heal
+    // script fixed it server-side — user-reported "web me 25 a gaya
+    // par apk me 1 hi dikha raha" bug, where BOSCHLTD26JULFUT showed
+    // Lot Size 1 in APK despite the heal having set it to 25.
+    // "always" forces a network fetch every time the trade sheet opens,
+    // so admin changes propagate within one mount instead of waiting on
+    // the next 30 s stale window (which never fired if the user only
+    // briefly visited the panel).
+    refetchOnMount: "always",
     retry: 1,
   });
 }
