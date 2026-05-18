@@ -19,6 +19,7 @@ import { colors } from "@shared/theme";
 import { Text } from "@shared/ui/Text";
 import { useTicker } from "@features/trade/hooks/useTicker";
 import { useQuote } from "@features/trade/hooks/useQuote";
+import { useQueryClient } from "@tanstack/react-query";
 import { usePlaceOrder } from "@features/trade/hooks/usePlaceOrder";
 import { sounds } from "@shared/services/sounds";
 import {
@@ -209,6 +210,7 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
   const low = tick?.low ?? quote.data?.low ?? 0;
 
   const place = usePlaceOrder();
+  const queryClient = useQueryClient();
   const pushToast = useUiStore((s) => s.pushToast);
 
   const symbol = target?.symbol ?? label.symbol;
@@ -450,6 +452,39 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
         message: "Insufficient balance — add funds to place this trade.",
       });
       return;
+    }
+    // ── Per-instrument cap pre-check (MAX_EACH_EXCEEDED) ───────────
+    // Mirrors validator's `max_each` check. Without this, follow-up
+    // orders that would push the position past the admin's
+    // `maxLots/script` cap fire optimistically, briefly tick the
+    // position size up by one lot, and only get rolled back ~1 s
+    // later when the server rejection lands — the user-reported
+    // "1 sec ke liye bad ja rha" flicker. Reading positions from the
+    // RQ cache keeps this client-side and offline-safe.
+    const maxLotsPerScript = Number(effective.data?.max_each_lot ?? 0);
+    if (maxLotsPerScript > 0) {
+      const openPositions =
+        (queryClient.getQueryData<any[]>(["positions", "open"]) as
+          | any[]
+          | undefined) || [];
+      const existing = openPositions.find(
+        (p: any) =>
+          p &&
+          p.instrument_token === target.token &&
+          p.product_type === "MIS",
+      );
+      const heldQty = Number(existing?.quantity ?? 0);
+      const heldLots = lotSizeForConv > 0 ? heldQty / lotSizeForConv : 0;
+      const deltaLots = action === "BUY" ? value : -value;
+      const projectedNet = heldLots + deltaLots;
+      const isReducing = Math.abs(projectedNet) < Math.abs(heldLots);
+      if (!isReducing && Math.abs(projectedNet) > maxLotsPerScript) {
+        pushToast({
+          kind: "warn",
+          message: `Per-instrument cap reached: would hold ${Math.abs(projectedNet)} > ${maxLotsPerScript} lot(s)`,
+        });
+        return;
+      }
     }
     // ── Market-closed pre-check ────────────────────────────────
     // Without this the user sees a green "BUY 1 placed" toast
