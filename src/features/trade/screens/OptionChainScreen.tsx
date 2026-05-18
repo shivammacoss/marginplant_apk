@@ -19,6 +19,7 @@ import {
 } from "@features/trade/hooks/useOptionChain";
 import { useTickerStore } from "@features/trade/store/ticker.store";
 import { usePriceFlash } from "@features/trade/hooks/usePriceFlash";
+import { useTradeSheet } from "@features/trade/components/TradeSheetProvider";
 import { formatINR, formatNumber, formatSigned } from "@shared/utils/format";
 import type {
   OptionLeg,
@@ -539,6 +540,7 @@ const LegCell = memo(function LegCell({
   const wsTick = useTickerStore((s) =>
     leg?.token ? s.ticks[String(leg.token)] : undefined,
   );
+  const tradeSheet = useTradeSheet();
 
   // WS gives live ticks while market open; REST leg.ltp keeps the last
   // traded price visible after market close so the user still sees value.
@@ -555,25 +557,16 @@ const LegCell = memo(function LegCell({
 
   const onPress = () => {
     if (!leg?.token) return;
-    // We want back-from-the-new-option-chart to land on the screen that
-    // ORIGINALLY opened the chain — typically Market/Home — not the
-    // underlying's chart that the chain was pushed on top of.
-    //
-    // Previously this used `router.replace`, which only swaps the
-    // option-chain for the new chart. If the chain was pushed on top of
-    // a parent chart (Chart(NIFTY) → OptionChain → strike-tap), the
-    // parent chart stayed in the stack and back from the option's chart
-    // bounced through it ("back doesn't work, chart re-opens" — that
-    // bug). `dismissAll` clears every push above the tab root, then we
-    // push the new chart cleanly so the stack is exactly
-    // [tab-root, Chart(option)] and back is a single tap to Market.
-    try {
-      router.dismissAll();
-    } catch {
-      // dismissAll throws on some versions when there's nothing to
-      // dismiss — ignore and fall through to push.
-    }
-    router.push({ pathname: "/(tabs)/trade", params: { token: leg.token } });
+    // User feedback: tapping a strike used to navigate to the full option
+    // chart screen — "agar BUY/SELL hi karna hai to chart kyun?". Open the
+    // existing TradeSheet bottom-sheet (compact 90% sheet with BUY/SELL,
+    // lots, margin tiles, SL/TP toggle) instead, so the trader stays on
+    // the chain context and can punch the order in 2 taps. The sheet
+    // itself carries a Charts button for users who DO need the chart.
+    tradeSheet.open({
+      token: String(leg.token),
+      symbol: leg.symbol ?? undefined,
+    });
   };
 
   if (empty) {
