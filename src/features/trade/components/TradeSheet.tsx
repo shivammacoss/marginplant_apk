@@ -651,7 +651,7 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
         onClosed?.();
       }}
     >
-      <BottomSheetView style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 24 }}>
+      <BottomSheetView style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 14 }}>
         {target ? (
           <>
             {/* Header row: symbol + "1" pill | bid red / ask green | X */}
@@ -758,7 +758,7 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
                 and from Zerodha for NSE / BSE / NFO / MCX. Falls back to
                 "—" while the quote hasn't landed yet (no misleading
                 ₹0.00 placeholder). */}
-            <View style={{ flexDirection: "row", marginTop: 16 }}>
+            <View style={{ flexDirection: "row", marginTop: 10 }}>
               <KV
                 label="LTP High"
                 value={high > 0 ? formatNumber(high, 2) : "—"}
@@ -779,8 +779,8 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
               style={{
                 flexDirection: "row",
                 alignItems: "center",
-                marginTop: 18,
-                paddingTop: 14,
+                marginTop: 10,
+                paddingTop: 10,
                 borderTopWidth: 1,
                 borderTopColor: colors.border,
               }}
@@ -850,7 +850,7 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
             </View>
 
             {/* Price box + lot stepper */}
-            <View style={{ flexDirection: "row", marginTop: 14 }}>
+            <View style={{ flexDirection: "row", marginTop: 10 }}>
               <View
                 style={{
                   flex: 1,
@@ -946,7 +946,7 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
             <View
               style={{
                 flexDirection: "row",
-                marginTop: 12,
+                marginTop: 8,
                 backgroundColor: colors.bgElevated,
                 borderRadius: 10,
                 borderWidth: 1,
@@ -1018,15 +1018,14 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
               </View>
             ) : null}
 
-            {/* 4-up trade-preview KPI grid (2×2).
-                Top row = margin REQUIRED for the contemplated trade,
-                bottom row = wallet state. Gives the trader the two
-                numbers that matter before they tap BUY/SELL:
-                  • What does this trade cost me?
-                  • Do I have enough headroom? */}
-            <View style={{ marginTop: 14, gap: 8 }}>
-              {/* Row 1: trade cost preview — what this BUY/SELL would lock. */}
-              <View style={{ flexDirection: "row", gap: 8 }}>
+            {/* 4-up trade-preview KPI grid (2×2). User asked to drop
+                the BAL / EQUITY tiles — the four below cover everything
+                a trader needs at the tap moment:
+                  Top row → margin REQUIRED for this BUY/SELL.
+                  Bottom row → wallet state (what's already locked +
+                               what's left to spend). */}
+            <View style={{ marginTop: 8, gap: 6 }}>
+              <View style={{ flexDirection: "row", gap: 6 }}>
                 <KpiCell
                   label="INTRADAY MARGIN"
                   value={compactINR(intradayMarginReq)}
@@ -1036,18 +1035,10 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
                   value={compactINR(carryForwardReq)}
                 />
               </View>
-              {/* Row 2: Dabba / CFD wallet KPIs — same four numbers most
-                  brokers surface in their trade strip. Bal stays put when
-                  margin is locked; Equity reflects floating PnL; Free is
-                  what the user can actually deploy on the NEXT trade. */}
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                <KpiCell label="BAL" value={compactINR(bal)} />
-                <KpiCell label="EQUITY" value={compactINR(equity)} />
-              </View>
-              <View style={{ flexDirection: "row", gap: 8 }}>
-                <KpiCell label="MARGIN" value={compactINR(margin)} />
+              <View style={{ flexDirection: "row", gap: 6 }}>
+                <KpiCell label="USED MARGIN" value={compactINR(margin)} />
                 <KpiCell
-                  label="FREE"
+                  label="AVAILABLE"
                   value={compactINR(free)}
                   tone={free < 0 ? "sell" : "buy"}
                 />
@@ -1055,7 +1046,7 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
             </View>
 
             {/* Big BUY (green) / SELL (red) — instant fire */}
-            <View style={{ flexDirection: "row", marginTop: 16 }}>
+            <View style={{ flexDirection: "row", marginTop: 10 }}>
               <ActionButton
                 kind="BUY"
                 price={ask}
@@ -1289,20 +1280,22 @@ function KpiCell({
       style={{
         flex: 1,
         backgroundColor: colors.bgElevated,
-        borderRadius: 10,
+        borderRadius: 8,
         borderWidth: 1,
         borderColor: colors.border,
-        paddingHorizontal: 10,
-        paddingVertical: 10,
+        paddingHorizontal: 8,
+        paddingVertical: 6,
       }}
     >
-      <Text tone="dim" style={{ fontSize: 9.5, fontWeight: "700", letterSpacing: 0.5 }}>
+      <Text tone="dim" style={{ fontSize: 9, fontWeight: "700", letterSpacing: 0.4 }}>
         {label}
       </Text>
       <Text
         mono
-        style={{ color, fontSize: 13, fontWeight: "800", marginTop: 4 }}
+        style={{ color, fontSize: 12, fontWeight: "800", marginTop: 2 }}
         numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.7}
       >
         {value}
       </Text>
@@ -1400,7 +1393,7 @@ function ActionButton({
         style={{
           backgroundColor: bg,
           borderRadius: 10,
-          paddingVertical: 14,
+          paddingVertical: 11,
           alignItems: "center",
         }}
       >
