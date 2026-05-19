@@ -40,6 +40,50 @@ function extractValidationDetail(
   return first.msg.replace(/^Value error,\s*/i, "");
 }
 
+// CODE → friendly message table. Every backend AppError ships a `code`
+// (see backend/app/core/exceptions.py + the trading domain raises in
+// services/order_validator.py & risk_enforcer.py). Mapping by CODE
+// first means we get the same wording whether the same error comes
+// back as 400, 403 or 422 — and we no longer collapse "admin blocked
+// this segment" / "stop-loss is mandatory" into the generic
+// "Session expired" 401-403 fallback (the bug the user repeatedly
+// reported). When a code isn't listed here we fall through to the
+// backend's `message` string, which is already user-friendly for
+// every raise site in the codebase.
+const CODE_MESSAGES: Record<string, string> = {
+  // ── Auth ─────────────────────────────────────────────────────────
+  INVALID_CREDENTIALS: "Invalid email or password.",
+  ACCOUNT_BLOCKED: "Account blocked — contact support.",
+  ACCOUNT_INACTIVE: "Account is not active — contact support.",
+  TWO_FA_REQUIRED: "Two-factor code required.",
+  TWO_FA_INVALID: "Two-factor code is incorrect.",
+  // Token issues — these legitimately mean "log in again".
+  TOKEN_EXPIRED: "Session expired — please log in again.",
+  TOKEN_INVALID: "Session is invalid — please log in again.",
+  AUTH_ERROR: "Authentication failed — please log in again.",
+
+  // ── Permissions ──────────────────────────────────────────────────
+  FORBIDDEN: "You don't have permission for this action.",
+  PERMISSION_DENIED: "Trading is disabled on your account — contact support.",
+
+  // ── Trading (segment + lots + risk gates) ────────────────────────
+  SEGMENT_NOT_ALLOWED: "This segment is blocked by admin.",
+  MARKET_CLOSED: "Market is closed for this instrument.",
+  EXIT_ONLY_MODE: "Exit-only mode is on — only closing trades allowed.",
+  INSUFFICIENT_FUNDS: "Insufficient balance — add funds to place this trade.",
+  HOLD_TIME_GUARD: "Hold-time guard active — wait before closing this trade.",
+
+  // ── Resource ─────────────────────────────────────────────────────
+  NOT_FOUND: "Not found.",
+  CONFLICT: "Already exists.",
+  RATE_LIMIT_EXCEEDED: "Too many attempts — slow down and retry.",
+};
+
+// Codes that genuinely mean "your auth is bust, send to login screen".
+// Listed separately so caller-side hooks (e.g. session-expired redirect)
+// can detect them via `error.code in SESSION_BUST_CODES`.
+const SESSION_BUST_CODES = new Set(["TOKEN_EXPIRED", "TOKEN_INVALID", "AUTH_ERROR"]);
+
 function normaliseMessage(
   message: string,
   code: string,
@@ -47,53 +91,66 @@ function normaliseMessage(
   url: string | undefined,
   details: Record<string, unknown> | undefined,
 ): string {
-  // Friendly mapping for common cases.
-  //
-  // 401/403 → "Session expired" was misleading on fresh-login failures
-  // (admin creates user with wrong password → user tries to log in →
-  // 401 INVALID_CREDENTIALS → app said "Session expired" so the user
-  // thought their login was succeeding then expiring instead of being
-  // rejected outright). Map auth-failure CODES from the backend before
-  // the generic session-expired fallback so the toast tells the user
-  // what's actually wrong.
-  if (status === 401 || status === 403) {
-    if (code === "INVALID_CREDENTIALS") {
-      return "Invalid email or password.";
-    }
-    if (code === "ACCOUNT_BLOCKED") {
-      return "Account blocked — contact support.";
-    }
-    if (code === "ACCOUNT_INACTIVE") {
-      return "Account is not active — contact support.";
-    }
-    if (code === "TWO_FA_REQUIRED") {
-      return "Two-factor code required.";
-    }
-    if (code === "TWO_FA_INVALID") {
-      return "Two-factor code is incorrect.";
-    }
-    return "Session expired — please log in again.";
+  // 1. Code-first mapping. Wins over status because the same code may
+  //    arrive with different statuses depending on call site.
+  if (code && CODE_MESSAGES[code]) {
+    return CODE_MESSAGES[code];
   }
-  if (status === 503 || status === 502 || status === 504) {
-    return "Server unreachable — check your internet and try again.";
-  }
-  if (status === 429) {
-    return "Too many attempts — slow down and retry.";
-  }
+
+  // 2. Validation — extract the first per-field reason from the
+  //    backend's Pydantic error payload. Falls back to the raw
+  //    "Validation failed" message if no field detail is present.
   if (status === 422 || code === "VALIDATION_FAILED") {
     const detail = extractValidationDetail(details);
     if (detail) return detail;
     return message || "Please check the fields and try again.";
   }
+
+  // 3. Infra-level statuses — these come from gateways / load
+  //    balancers, not our backend code, so `message` is rarely
+  //    useful. Show a short actionable line instead.
+  if (status === 503 || status === 502 || status === 504) {
+    return "Server unreachable — check your internet and try again.";
+  }
+  if (status === 429) {
+    return CODE_MESSAGES.RATE_LIMIT_EXCEEDED;
+  }
+
+  // 4. 500 — backend's _unhandled_handler swallows real tracebacks
+  //    with a generic "An unexpected error occurred". Suffix the path
+  //    so the user can quote it in support.
   if (status === 500 || code === "INTERNAL_SERVER_ERROR") {
-    // Backend logs the full traceback under `logger.exception("unhandled_exception")`
-    // — surface a short, debuggable suffix so the user can quote it in support.
     const path = url ? url.split("?")[0]?.split("/").slice(-2).join("/") ?? "" : "";
     return path
       ? `Server error on ${path}. Please try again or contact support.`
       : "Server error — please try again or contact support.";
   }
-  return message;
+
+  // 5. 401/403 with NO recognised code → likely a token issue or a
+  //    forgotten backend raise — default to "Session expired" so the
+  //    user knows logging in again is the next step. Specific 401/403
+  //    cases (INVALID_CREDENTIALS, SEGMENT_NOT_ALLOWED, etc.) already
+  //    matched step 1 above.
+  if (status === 401 || status === 403) {
+    if (message && !/(unauthorized|forbidden|not\s*authenticated)/i.test(message)) {
+      // Backend raised something domain-specific without a code we know —
+      // its `message` is more useful than the generic fallback.
+      return message;
+    }
+    return "Session expired — please log in again.";
+  }
+
+  // 6. Default — backend's message string. Every raise site in the
+  //    codebase ships a human-readable line so this is almost always
+  //    the right thing to show.
+  return message || "Something went wrong.";
+}
+
+/** True when the error code means the user's session is actually
+ *  invalid (token expired/invalid). Use this to decide whether to
+ *  kick the user to the login screen vs just show a toast. */
+export function isSessionBust(err: unknown): boolean {
+  return err instanceof ApiError && SESSION_BUST_CODES.has(err.code);
 }
 
 export async function unwrap<T>(p: Promise<{ data: ApiResponse<T> }>): Promise<T> {
