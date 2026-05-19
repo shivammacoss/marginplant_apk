@@ -799,14 +799,33 @@ function LivePositionRow({
     if (row.status !== "OPEN") return row;
     const liveLtp = tick?.ltp;
     if (liveLtp == null || !Number.isFinite(liveLtp)) return row;
+    // Card column is labelled "BID" for BUY and "ASK" for SELL — that's
+    // the price the user would actually close at right now. Previously
+    // we showed `tick.ltp` under the BID label which (a) was technically
+    // wrong and (b) didn't tick when only the bid/ask side of the
+    // book moved (common in slow scalping windows — the user reported
+    // "BID move nahi ho raha"). Now we use the side-correct price from
+    // the live feed, falling back to LTP only when the depth side is
+    // missing.
+    const liveBid = Number.isFinite(tick?.bid) && (tick?.bid as number) > 0
+      ? (tick!.bid as number)
+      : liveLtp;
+    const liveAsk = Number.isFinite(tick?.ask) && (tick?.ask as number) > 0
+      ? (tick!.ask as number)
+      : liveLtp;
+    const closeSide = row.side === "BUY" ? liveBid : liveAsk;
+    // P&L is the realised value if the user squared off right now —
+    // which means using the close-side price, not the last trade.
     const displayPnl = computeLivePnl({
       serverPnl: Number(row.pnl) || 0,
-      liveLtp,
+      liveLtp: closeSide,
       avg: Number(row.entry_price),
       qty: row.side === "BUY" ? row.quantity : -row.quantity,
     });
-    return { ...row, ltp: liveLtp, pnl: displayPnl };
-  }, [row, tick?.ltp]);
+    return { ...row, ltp: closeSide, pnl: displayPnl };
+    // Include bid + ask in deps so the row re-renders on every depth
+    // tick even when LTP itself hasn't moved.
+  }, [row, tick?.ltp, tick?.bid, tick?.ask]);
 
   return (
     <PositionRowV2
