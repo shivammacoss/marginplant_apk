@@ -1,5 +1,15 @@
 import { useCallback, useMemo, useState } from "react";
-import { Alert, FlatList, Pressable, RefreshControl, View } from "react-native";
+import {
+  Alert,
+  FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
+  TextInput,
+  View,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Screen } from "@shared/components/Screen";
 import { IllustrationEmpty } from "@shared/components/IllustrationEmpty";
@@ -7,7 +17,11 @@ import { SketchIllustration } from "@shared/components/SketchIllustration";
 import { Loader } from "@shared/ui/Loader";
 import { Text } from "@shared/ui/Text";
 import { colors, spacing } from "@shared/theme";
-import { useCancelOrder, useOrders } from "@features/trade/hooks/useOrders";
+import {
+  useCancelOrder,
+  useModifyOrder,
+  useOrders,
+} from "@features/trade/hooks/useOrders";
 import { formatNumber } from "@shared/utils/format";
 import { useManualRefresh } from "@shared/hooks/useManualRefresh";
 import type { Order, OrderStatus } from "@features/trade/types/order.types";
@@ -93,6 +107,11 @@ export function OrdersScreen() {
     limit: 200,
   });
   const cancel = useCancelOrder();
+  const modify = useModifyOrder();
+  // Open-row Edit modal. `null` = closed. Holds the actual Order so the
+  // modal can prefill lots / limit price and submit a diff back to the
+  // PUT /user/orders/:id endpoint.
+  const [editing, setEditing] = useState<Order | null>(null);
 
   // Manual-pull spinner only. Shared hook (see useManualRefresh).
   const { refreshing: manualRefreshing, onRefresh: onManualRefresh } =
@@ -225,20 +244,265 @@ export function OrdersScreen() {
                   }}
                 />
               )}
-              renderItem={({ item }) => (
-                <OrderRow
-                  order={item}
-                  onLongPress={
-                    OPEN_STATUSES.includes(item.status)
-                      ? () => confirmCancel(item)
-                      : undefined
-                  }
-                />
-              )}
+              renderItem={({ item }) => {
+                const isOpen = OPEN_STATUSES.includes(item.status);
+                return (
+                  <OrderRow
+                    order={item}
+                    onLongPress={isOpen ? () => confirmCancel(item) : undefined}
+                    onCancel={isOpen ? () => confirmCancel(item) : undefined}
+                    onEdit={isOpen ? () => setEditing(item) : undefined}
+                  />
+                );
+              }}
             />
           )}
         </>
+      <EditOrderModal
+        order={editing}
+        saving={modify.isPending}
+        onClose={() => setEditing(null)}
+        onSave={(body) => {
+          if (!editing) return;
+          modify.mutate(
+            { id: editing.id, body },
+            { onSuccess: () => setEditing(null) },
+          );
+        }}
+      />
     </Screen>
+  );
+}
+
+// ── Edit modal ────────────────────────────────────────────────────────
+// Only the three fields the backend's modify endpoint accepts —
+// lots, limit price, trigger price. Empty → don't include in PATCH so
+// the server keeps its existing value. Lot-only edit is the most
+// common case (size up or down before fill), so it's the top input.
+function EditOrderModal({
+  order,
+  saving,
+  onClose,
+  onSave,
+}: {
+  order: Order | null;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (body: { lots?: number; price?: number; trigger_price?: number }) => void;
+}) {
+  const [lots, setLots] = useState("");
+  const [price, setPrice] = useState("");
+  const [triggerPrice, setTriggerPrice] = useState("");
+
+  // Seed inputs whenever a new order is opened in the modal.
+  useMemo(() => {
+    if (order) {
+      setLots(String(order.lots ?? ""));
+      setPrice(order.price && Number(order.price) > 0 ? String(order.price) : "");
+      setTriggerPrice(
+        order.trigger_price && Number(order.trigger_price) > 0
+          ? String(order.trigger_price)
+          : "",
+      );
+    }
+  }, [order?.id]);
+
+  if (!order) return null;
+
+  const isLimit = order.order_type === "LIMIT";
+  const isSlOrSlm = order.order_type === "SL" || order.order_type === "SL-M";
+
+  function submit() {
+    const body: { lots?: number; price?: number; trigger_price?: number } = {};
+    const lotsNum = Number(lots);
+    if (Number.isFinite(lotsNum) && lotsNum > 0 && lotsNum !== Number(order.lots)) {
+      body.lots = lotsNum;
+    }
+    if (isLimit) {
+      const p = Number(price);
+      if (Number.isFinite(p) && p > 0 && p !== Number(order.price)) {
+        body.price = p;
+      }
+    }
+    if (isSlOrSlm) {
+      const tp = Number(triggerPrice);
+      if (Number.isFinite(tp) && tp > 0 && tp !== Number(order.trigger_price)) {
+        body.trigger_price = tp;
+      }
+    }
+    if (Object.keys(body).length === 0) {
+      onClose();
+      return;
+    }
+    onSave(body);
+  }
+
+  return (
+    <Modal
+      transparent
+      animationType="fade"
+      visible
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={{ flex: 1 }}
+      >
+        <Pressable
+          onPress={onClose}
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.55)",
+            justifyContent: "center",
+            alignItems: "stretch",
+            padding: spacing.lg,
+          }}
+        >
+          <Pressable
+            onPress={() => {}}
+            style={{
+              backgroundColor: colors.bgElevated,
+              borderRadius: 14,
+              padding: spacing.lg,
+              borderWidth: 1,
+              borderColor: colors.border,
+              gap: 12,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <View>
+                <Text style={{ fontSize: 16, fontWeight: "800" }}>
+                  Edit order
+                </Text>
+                <Text tone="muted" size="xs" style={{ marginTop: 2 }}>
+                  {order.action} · {order.symbol} · {order.order_type}
+                </Text>
+              </View>
+              <Pressable onPress={onClose} hitSlop={10}>
+                <Ionicons name="close" size={22} color={colors.textMuted} />
+              </Pressable>
+            </View>
+
+            <EditField
+              label="Lots"
+              value={lots}
+              onChange={setLots}
+              placeholder={String(order.lots ?? "1")}
+              keyboardType="decimal-pad"
+            />
+
+            {isLimit ? (
+              <EditField
+                label="Limit price"
+                value={price}
+                onChange={setPrice}
+                placeholder={
+                  order.price && Number(order.price) > 0
+                    ? formatNumber(Number(order.price), 2)
+                    : "0.00"
+                }
+                keyboardType="decimal-pad"
+              />
+            ) : null}
+
+            {isSlOrSlm ? (
+              <EditField
+                label="Trigger price"
+                value={triggerPrice}
+                onChange={setTriggerPrice}
+                placeholder={
+                  order.trigger_price && Number(order.trigger_price) > 0
+                    ? formatNumber(Number(order.trigger_price), 2)
+                    : "0.00"
+                }
+                keyboardType="decimal-pad"
+              />
+            ) : null}
+
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 6 }}>
+              <Pressable onPress={onClose} disabled={saving} style={{ flex: 1 }}>
+                <View
+                  style={{
+                    paddingVertical: 12,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={{ fontWeight: "700" }}>Cancel</Text>
+                </View>
+              </Pressable>
+              <Pressable onPress={submit} disabled={saving} style={{ flex: 1 }}>
+                <View
+                  style={{
+                    paddingVertical: 12,
+                    borderRadius: 10,
+                    backgroundColor: colors.primary,
+                    alignItems: "center",
+                    opacity: saving ? 0.6 : 1,
+                  }}
+                >
+                  <Text style={{ color: "#fff", fontWeight: "800" }}>
+                    {saving ? "Saving…" : "Save"}
+                  </Text>
+                </View>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function EditField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  keyboardType,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  keyboardType?: "default" | "decimal-pad" | "numeric";
+}) {
+  return (
+    <View>
+      <Text
+        tone="muted"
+        size="xs"
+        style={{ marginBottom: 4, fontWeight: "700", letterSpacing: 0.4 }}
+      >
+        {label}
+      </Text>
+      <TextInput
+        value={value}
+        onChangeText={(v) => onChange(v.replace(/[^\d.]/g, ""))}
+        placeholder={placeholder}
+        placeholderTextColor={colors.textDim}
+        keyboardType={keyboardType}
+        style={{
+          backgroundColor: colors.bgSurface,
+          borderRadius: 10,
+          borderWidth: 1,
+          borderColor: colors.border,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          color: colors.text,
+          fontSize: 16,
+          fontWeight: "700",
+        }}
+      />
+    </View>
   );
 }
 
@@ -434,9 +698,13 @@ function StatusPill({ status }: { status: OrderStatus }) {
 function OrderRow({
   order,
   onLongPress,
+  onCancel,
+  onEdit,
 }: {
   order: Order;
   onLongPress?: () => void;
+  onCancel?: () => void;
+  onEdit?: () => void;
 }) {
   const segmentLabel = fmtSegmentLabel(order.segment, order.exchange);
   const eventTs = order.executed_at || order.cancelled_at || order.created_at;
@@ -537,6 +805,79 @@ function OrderRow({
           <Text tone="sell" size="xs" style={{ marginTop: 6 }} numberOfLines={2}>
             {order.rejection_reason}
           </Text>
+        ) : null}
+
+        {/* Action strip — visible only for OPEN-tab rows. Long-press still
+            works as the legacy affordance, but tap is the discoverable
+            path users actually expect. */}
+        {onEdit || onCancel ? (
+          <View
+            style={{
+              flexDirection: "row",
+              gap: 8,
+              marginTop: 10,
+              justifyContent: "flex-end",
+            }}
+          >
+            {onEdit ? (
+              <Pressable onPress={onEdit} hitSlop={6}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 6,
+                    backgroundColor: "rgba(168,85,247,0.15)",
+                  }}
+                >
+                  <Ionicons
+                    name="create-outline"
+                    size={13}
+                    color={colors.primary}
+                  />
+                  <Text
+                    size="xs"
+                    style={{
+                      color: colors.primary,
+                      fontWeight: "800",
+                      letterSpacing: 0.4,
+                      marginLeft: 5,
+                    }}
+                  >
+                    EDIT
+                  </Text>
+                </View>
+              </Pressable>
+            ) : null}
+            {onCancel ? (
+              <Pressable onPress={onCancel} hitSlop={6}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 6,
+                    backgroundColor: "rgba(251,113,133,0.15)",
+                  }}
+                >
+                  <Ionicons name="close" size={13} color={colors.sell} />
+                  <Text
+                    size="xs"
+                    style={{
+                      color: colors.sell,
+                      fontWeight: "800",
+                      letterSpacing: 0.4,
+                      marginLeft: 5,
+                    }}
+                  >
+                    CANCEL
+                  </Text>
+                </View>
+              </Pressable>
+            ) : null}
+          </View>
         ) : null}
       </View>
     </Pressable>

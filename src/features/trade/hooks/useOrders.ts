@@ -5,7 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { OrdersAPI, type OrdersQuery } from "@features/trade/api/orders.api";
-import type { Order } from "@features/trade/types/order.types";
+import type { Order, ModifyOrderInput } from "@features/trade/types/order.types";
 import { ApiError } from "@core/api/errors";
 import { useUiStore } from "@shared/store/ui.store";
 
@@ -35,6 +35,21 @@ export function useCancelOrder() {
       pushToast({ kind: "success", message: "Order cancelled", ttlMs: 1500 });
     },
     onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["orders"] });
+    },
+    onError: (e: ApiError) =>
+      pushToast({ kind: "error", message: e.message }),
+  });
+}
+
+export function useModifyOrder() {
+  const qc = useQueryClient();
+  const pushToast = useUiStore((s) => s.pushToast);
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: ModifyOrderInput }) =>
+      OrdersAPI.modify(id, body),
+    onSuccess: () => {
+      pushToast({ kind: "success", message: "Order updated", ttlMs: 1500 });
       void qc.invalidateQueries({ queryKey: ["orders"] });
     },
     onError: (e: ApiError) =>
