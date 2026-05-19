@@ -654,43 +654,78 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
       <BottomSheetView style={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 14 }}>
         {target ? (
           <>
-            {/* Header row: symbol + "1" pill | bid red / ask green | X */}
+            {/* Header row — three columns: symbol+cart pill | bid/ask | X.
+                Long F&O symbols (BOSCHLTD26JULFUT = 16 chars) used to
+                push the bid/ask off-screen and hide the X. Now:
+                  • Left column has flexShrink=1 + numberOfLines=1 so
+                    the symbol ellipsizes instead of overflowing.
+                  • Right column has flexShrink=0 + adjustsFontSizeToFit
+                    so prices always fit in their box without truncation.
+                  • X button sits in its own column with a fixed min-
+                    width so it can never be visually clipped. */}
             <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Text style={{ fontSize: 20, fontWeight: "800", marginRight: 6 }}>
-                {symbol}
-              </Text>
               <View
                 style={{
                   flexDirection: "row",
                   alignItems: "center",
-                  paddingHorizontal: 6,
-                  paddingVertical: 2,
-                  borderRadius: 6,
-                  backgroundColor: colors.bgElevated,
+                  flexShrink: 1,
+                  flexGrow: 1,
+                  marginRight: 8,
+                  minWidth: 0,
                 }}
               >
-                <Ionicons name="cart" size={11} color={colors.textMuted} />
-                <Text size="xs" tone="muted" style={{ marginLeft: 3, fontWeight: "700" }}>
-                  1
+                <Text
+                  style={{
+                    fontSize: 18,
+                    fontWeight: "800",
+                    marginRight: 6,
+                    flexShrink: 1,
+                  }}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {symbol}
                 </Text>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingHorizontal: 6,
+                    paddingVertical: 2,
+                    borderRadius: 6,
+                    backgroundColor: colors.bgElevated,
+                    flexShrink: 0,
+                  }}
+                >
+                  <Ionicons name="cart" size={11} color={colors.textMuted} />
+                  <Text size="xs" tone="muted" style={{ marginLeft: 3, fontWeight: "700" }}>
+                    1
+                  </Text>
+                </View>
               </View>
-              <View style={{ flex: 1 }} />
-              <View style={{ alignItems: "flex-end" }}>
+              <View style={{ alignItems: "flex-end", flexShrink: 0 }}>
                 <View style={{ flexDirection: "row" }}>
                   <Text
                     mono
                     style={{
                       color: SELL_RED,
-                      fontSize: 15,
+                      fontSize: 14,
                       fontWeight: "800",
-                      marginRight: 10,
+                      marginRight: 8,
                     }}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
                   >
                     {bid != null ? formatNumber(bid, 2) : "—"}
                   </Text>
                   <Text
                     mono
-                    style={{ color: BUY_GREEN, fontSize: 15, fontWeight: "800" }}
+                    style={{ color: BUY_GREEN, fontSize: 14, fontWeight: "800" }}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.7}
                   >
                     {ask != null ? formatNumber(ask, 2) : "—"}
                   </Text>
@@ -703,6 +738,9 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
                     fontWeight: "700",
                     marginTop: 2,
                   }}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
                 >
                   {change >= 0 ? "+" : ""}
                   {formatNumber(change, 2)} ({changePct >= 0 ? "+" : ""}
@@ -712,7 +750,7 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
               <Pressable
                 onPress={() => sheet.current?.close()}
                 hitSlop={10}
-                style={{ marginLeft: 10 }}
+                style={{ marginLeft: 8, padding: 2, flexShrink: 0 }}
               >
                 <Ionicons name="close" size={22} color={colors.textMuted} />
               </Pressable>
