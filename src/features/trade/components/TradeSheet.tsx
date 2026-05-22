@@ -296,22 +296,34 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
       : 0;
   // Mirrors the web's OrderPanel margin math 1:1 so APK and web show
   // the SAME ₹ value for the same instrument + lot count. Source:
-  // marginplant_ind/frontend-user/components/trading/OrderPanel.tsx
+  // marginplant_ind_web/frontend-user/components/trading/OrderPanel.tsx
   //   marginPerLot = lotSize × refPrice × (margin_pct/100) / leverage
   //   intradayMargin = marginPerLot × lots
-  //   carryforwardMargin = intradayMargin × 1.4
   // For "fixed" mode the admin's ₹/lot is used directly (lot_size +
   // price are ignored). Returns 0 only when none of the knobs are
   // populated — callers use that as "unknown, don't block".
-  function calcRequiredMargin(notional: number, lotCount: number): number {
+  function calcRequiredMargin(
+    notional: number,
+    lotCount: number,
+    side: "intraday" | "overnight" = "intraday",
+  ): number {
     const eff = effective.data;
     if (!eff || notional <= 0 || lotCount <= 0) return 0;
-    const fpm = Number(eff.fixed_margin_per_lot ?? 0);
+    const fpm =
+      side === "overnight"
+        ? Number((eff as any).overnight_fixed_margin_per_lot ?? 0)
+        : Number(eff.fixed_margin_per_lot ?? 0);
     if (fpm > 0 && (eff.margin_calc_mode ?? "").toLowerCase() === "fixed") {
       return lotCount * fpm;
     }
-    const mp = Number(eff.margin_percentage ?? 0);
-    const lev = Number(eff.leverage ?? 0) || 1;
+    const mp =
+      side === "overnight"
+        ? Number((eff as any).overnight_margin_percentage ?? 0)
+        : Number(eff.margin_percentage ?? 0);
+    const lev =
+      side === "overnight"
+        ? Number((eff as any).overnight_leverage ?? 0) || 1
+        : Number(eff.leverage ?? 0) || 1;
     if (mp > 0) {
       return (notional * (mp / 100)) / lev;
     }
@@ -325,10 +337,22 @@ export const TradeSheet = forwardRef<TradeSheetRef, TradeSheetProps>(({ initialA
       : previewNotional > 0
       ? previewNotional / 5
       : 0;
-  // Web formula: carryforward = intraday × 1.4 (overnight risk premium).
-  // For intraday-only segments (crypto/forex) the multiplier is moot
-  // because the user can't carry overnight anyway.
-  const carryForwardReq = intradayMarginReq * 1.4;
+  // Carry-forward (overnight) margin from the OVERNIGHT triple in
+  // segment settings — same formula as `calcRequiredMargin` but reading
+  // the `overnight_*` fields. Old code used `intraday × 1.4` which is
+  // wrong on every segment whose admin matrix has non-default overnight
+  // leverage (e.g. STOCKCAFE has NSE_FUT ovn=60×, intra=500× — true
+  // ratio 8.3×, not 1.4×). Operator-flagged 22-May.
+  // For intraday-only segments (crypto/forex/spot commodities) the
+  // resolver returns equal intraday and overnight values so the result
+  // collapses to intradayMarginReq automatically.
+  const overnightStrict = calcRequiredMargin(
+    previewNotional,
+    previewLots,
+    "overnight",
+  );
+  const carryForwardReq =
+    overnightStrict > 0 ? overnightStrict : intradayMarginReq;
 
   // Derived display value for the stepper input — `lots` is the
   // canonical state; QTY mode renders `lots × lot_size`.

@@ -133,12 +133,15 @@ export function useLiveWalletKpi(): LiveWalletKpi {
   const available = rawAvailable + m2m;
 
   // CF (Carry Forward) Required = the EXTRA cash a user needs to convert
-  // every open MIS position to NRML so it can be held overnight. Mirrors
-  // the backend's `holding_margin` formula on /active-trades:
-  //   MIS  → holding = used × 1.4   ⇒ extra = used × 0.4
-  //   NRML → holding = used         ⇒ extra = 0 (already overnight)
-  // Computed locally from the same /positions/open data the row cards
-  // use, so the strip never disagrees with the per-row holding column.
+  // every open MIS position to NRML so it can be held overnight. Backend
+  // now stamps the REAL overnight requirement on each position row as
+  // `holding_margin` (computed via the segment-settings cascade —
+  // broker / admin / super-admin / global pools), so we just sum
+  // (holding_margin − margin_used) across MIS rows. Old code multiplied
+  // `margin_used × 0.4` (the 1.4× heuristic minus 1.0) which is wrong on
+  // every segment whose admin matrix has non-default overnight leverage
+  // — operator-flagged 22-May: TCS card showed ₹1,127 here while the
+  // trade dialog correctly showed ₹5,752.
   const cfRequired = useMemo(() => {
     const rows: Position[] = openPositions.data ?? [];
     if (rows.length === 0) return 0;
@@ -146,7 +149,16 @@ export function useLiveWalletKpi(): LiveWalletKpi {
     for (const p of rows) {
       const isMIS = (p.product_type || "").toUpperCase() === "MIS";
       if (!isMIS) continue;
-      total += (Number(p.margin_used) || 0) * 0.4;
+      const used = Number(p.margin_used) || 0;
+      const holding = Number((p as any).holding_margin);
+      if (Number.isFinite(holding) && holding > 0) {
+        // Backend-stamped overnight margin — use it directly.
+        total += Math.max(0, holding - used);
+      } else {
+        // Fall back to the old 0.4× heuristic ONLY if the API didn't
+        // stamp holding_margin yet (older backend). Better than zero.
+        total += used * 0.4;
+      }
     }
     return total;
   }, [openPositions.data]);
